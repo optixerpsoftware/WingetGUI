@@ -20,8 +20,36 @@ QSS = f"""
     outline: none;
 }}
 
-QMainWindow, QWidget#root {{
+QMainWindow, QWidget#root, QDialog {{
     background-color: {BG};
+}}
+
+QCheckBox {{
+    color: {TEXT};
+    spacing: 10px;
+    font-size: 13px;
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    background-color: {SURFACE};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {PRIMARY};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {PRIMARY};
+    border-color: {PRIMARY};
+    image: none;
+}}
+QCheckBox::indicator:disabled {{
+    background-color: {SURFACE_ALT};
+    border-color: {BORDER};
+}}
+QCheckBox:disabled {{
+    color: {TEXT_MUTED};
 }}
 
 QLabel#title {{
@@ -81,6 +109,12 @@ QPushButton#ghost {{
 }}
 QPushButton#ghost:hover  {{ background-color: {SURFACE_ALT}; border-color: {PRIMARY}; }}
 QPushButton#ghost:pressed{{ background-color: {SURFACE}; }}
+QPushButton#ghost:checked {{
+    background-color: rgba(132, 94, 247, 0.18);
+    border-color: {ACCENT};
+    color: {ACCENT};
+    font-weight: 600;
+}}
 QPushButton#ghost:disabled {{
     color: {TEXT_MUTED};
     border-color: {BORDER};
@@ -147,6 +181,62 @@ QLabel#installedBadge {{
     border: 1px solid rgba(81, 207, 102, 0.35);
     border-radius: 8px;
     padding: 6px 12px;
+}}
+QLabel#upgradeBadge {{
+    color: {ACCENT};
+    font-size: 11px;
+    font-weight: 600;
+    background-color: rgba(132, 94, 247, 0.14);
+    border: 1px solid rgba(132, 94, 247, 0.40);
+    border-radius: 6px;
+    padding: 3px 8px;
+}}
+
+/* === Danger button === */
+QPushButton#danger {{
+    background-color: transparent;
+    border: 1px solid rgba(255, 107, 107, 0.45);
+    border-radius: 10px;
+    padding: 10px 16px;
+    color: {DANGER};
+    font-weight: 600;
+    font-size: 13px;
+}}
+QPushButton#danger:hover {{
+    background-color: rgba(255, 107, 107, 0.12);
+    border-color: {DANGER};
+}}
+QPushButton#danger:pressed {{
+    background-color: rgba(255, 107, 107, 0.20);
+}}
+QPushButton#danger:disabled {{
+    color: {TEXT_MUTED};
+    border-color: {BORDER};
+}}
+
+/* === Tabs === */
+QTabWidget#mainTabs::pane {{
+    border: none;
+    background-color: {BG};
+}}
+QTabBar {{
+    background-color: {BG};
+    qproperty-drawBase: 0;
+}}
+QTabBar::tab {{
+    background-color: transparent;
+    color: {TEXT_MUTED};
+    border: none;
+    padding: 12px 22px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{
+    color: {TEXT};
+}}
+QTabBar::tab:selected {{
+    color: {PRIMARY};
+    border-bottom: 2px solid {PRIMARY};
 }}
 
 /* === Scroll area === */

@@ -3,13 +3,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-    QStatusBar, QVBoxLayout, QWidget,
+    QStatusBar, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from src.ui.import_dialog import ImportSelectionDialog
+from src.ui.installed_view import InstalledView
 from src.ui.search_view import SearchView
 from src.ui.theme import QSS
 from src.ui.workers import (
-    BulkInstallWorker, InstallWorker, InstalledScanWorker, SearchWorker,
+    BulkInstallWorker, InstallWorker, InstalledListWorker, InstalledScanWorker,
+    SearchWorker, UninstallWorker, UpgradeWorker,
 )
 from src.winget import Winget, WingetPackage, export_packages, import_package_ids
 
@@ -28,6 +31,9 @@ class MainWindow(QMainWindow):
         self._scan_worker: InstalledScanWorker | None = None
         self._bulk_worker: BulkInstallWorker | None = None
         self._install_workers: list[InstallWorker] = []
+        self._installed_list_worker: InstalledListWorker | None = None
+        self._uninstall_workers: list[UninstallWorker] = []
+        self._upgrade_workers: list[UpgradeWorker] = []
 
         self._build_ui()
         self.setStyleSheet(QSS)
@@ -44,10 +50,22 @@ class MainWindow(QMainWindow):
         self._view.export_requested.connect(self._on_export_requested)
         self._view.bulk_install_requested.connect(self._on_bulk_install_requested)
 
+        self._installed_view = InstalledView()
+        self._installed_view.refresh_requested.connect(self._refresh_installed_list)
+        self._installed_view.update_requested.connect(self._on_update_requested)
+        self._installed_view.uninstall_requested.connect(self._on_uninstall_requested)
+        self._installed_view.upgrade_all_requested.connect(self._on_upgrade_all_requested)
+
+        self._tabs = QTabWidget()
+        self._tabs.setObjectName("mainTabs")
+        self._tabs.addTab(self._view, "Rechercher")
+        self._tabs.addTab(self._installed_view, "Installés")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
         root = QWidget(objectName="root")
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._view)
+        layout.addWidget(self._tabs)
         self.setCentralWidget(root)
 
         self._status_label = QLabel("Prêt.")
@@ -174,16 +192,12 @@ class MainWindow(QMainWindow):
                                     "Aucun paquet trouvé dans le fichier.")
             return
 
-        # filtre les paquets déjà installés
-        installed = set(self._view.installed_ids)
-        to_install = [pid for pid in ids if pid not in installed]
-        skipped = len(ids) - len(to_install)
+        dialog = ImportSelectionDialog(ids, set(self._view.installed_ids), self)
+        if dialog.exec() != ImportSelectionDialog.Accepted:
+            return
 
-        msg = (f"{len(to_install)} paquet(s) à installer"
-               + (f" ({skipped} déjà installé(s) seront ignorés)" if skipped else "")
-               + ".\n\nLancer l'installation ?")
-        confirm = QMessageBox.question(self, "Confirmer l'installation", msg)
-        if confirm != QMessageBox.Yes or not to_install:
+        to_install = dialog.selected_ids()
+        if not to_install:
             return
 
         self._run_bulk_install(to_install)
@@ -197,7 +211,7 @@ class MainWindow(QMainWindow):
             return
         self._run_bulk_install(ids)
 
-    def _run_bulk_install(self, ids: list[str]) -> None:
+    def _run_bulk_install(self, ids: list[str], action: str = "install") -> None:
         if self._bulk_worker and self._bulk_worker.isRunning():
             return
 
@@ -205,7 +219,7 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._progress.setVisible(True)
 
-        self._bulk_worker = BulkInstallWorker(ids, self._winget, self)
+        self._bulk_worker = BulkInstallWorker(ids, self._winget, self, action=action)
         self._bulk_worker.progress.connect(self._on_bulk_progress)
         self._bulk_worker.item_done.connect(self._on_bulk_item_done)
         self._bulk_worker.finished_all.connect(self._on_bulk_finished)
@@ -234,12 +248,117 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         self._view.refresh_bundle_count(len(self._bundle))
         QMessageBox.information(
-            self, "Installation terminée",
-            f"{n_success}/{n_total} paquet(s) installé(s) avec succès.",
+            self, "Opération terminée",
+            f"{n_success}/{n_total} paquet(s) traité(s) avec succès.",
         )
-        self._status_label.setText(f"{n_success}/{n_total} paquet(s) installé(s).")
+        self._status_label.setText(f"{n_success}/{n_total} paquet(s) traité(s).")
+        # rafraîchir la vue des paquets installés si elle est déjà chargée
+        if self._installed_view.upgradable_ids or self._tabs.currentWidget() is self._installed_view:
+            self._refresh_installed_list()
 
     def _on_bulk_failed(self, message: str) -> None:
         self._progress.setVisible(False)
         QMessageBox.critical(self, "Installation interrompue", message)
         self._status_label.setText(f"Erreur : {message}")
+
+    # ---- vue paquets installés ------------------------------------------
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._tabs.widget(index) is not self._installed_view:
+            return
+        if self._installed_list_worker and self._installed_list_worker.isRunning():
+            return
+        if not self._installed_view.packages:
+            self._refresh_installed_list()
+
+    def _refresh_installed_list(self) -> None:
+        if self._installed_list_worker and self._installed_list_worker.isRunning():
+            return
+        self._installed_view.set_loading(True)
+        self._status_label.setText("Chargement des paquets installés…")
+        self._installed_list_worker = InstalledListWorker(self._winget, self)
+        self._installed_list_worker.finished_with_packages.connect(self._on_installed_list_ready)
+        self._installed_list_worker.failed.connect(self._on_installed_list_failed)
+        self._installed_list_worker.start()
+
+    def _on_installed_list_ready(self, packages: list[WingetPackage],
+                                 upgradable: set[str]) -> None:
+        self._installed_view.set_loading(False)
+        self._installed_view.show_packages(packages, upgradable)
+        # garde aussi en cohérence l'état "installé" sur la vue de recherche
+        self._view.set_installed_ids({p.id for p in packages})
+        self._status_label.setText(
+            f"{len(packages)} paquets installés · {len(upgradable)} mise(s) à jour disponible(s)."
+        )
+
+    def _on_installed_list_failed(self, message: str) -> None:
+        self._installed_view.set_loading(False)
+        self._installed_view.show_error(message)
+        self._status_label.setText(f"Erreur : {message}")
+
+    def _on_update_requested(self, package: WingetPackage) -> None:
+        self._status_label.setText(f"Mise à jour de {package.name}…")
+        worker = UpgradeWorker(package, self._winget, self)
+        worker.finished_with_code.connect(self._on_update_done)
+        worker.failed.connect(self._on_update_failed)
+        worker.finished.connect(lambda w=worker: self._upgrade_workers.remove(w))
+        self._upgrade_workers.append(worker)
+        worker.start()
+
+    def _on_update_done(self, code: int, package: WingetPackage) -> None:
+        success = code == 0
+        self._installed_view.mark_action_result(package, success, "Mise à jour")
+        self._status_label.setText(
+            f"{package.name} mis à jour." if success
+            else f"Échec de la mise à jour de {package.name} (code {code})."
+        )
+        if success:
+            self._refresh_installed_list()
+
+    def _on_update_failed(self, message: str, package: WingetPackage) -> None:
+        self._installed_view.mark_action_result(package, False, "Mise à jour")
+        self._status_label.setText(f"Erreur : {message}")
+
+    def _on_uninstall_requested(self, package: WingetPackage) -> None:
+        confirm = QMessageBox.question(
+            self, "Confirmer la désinstallation",
+            f"Désinstaller {package.name} ({package.id}) ?",
+        )
+        if confirm != QMessageBox.Yes:
+            # rétablit l'état du bouton sans relancer d'action
+            self._installed_view.mark_action_result(package, True, "Désinstallation")
+            return
+
+        self._status_label.setText(f"Désinstallation de {package.name}…")
+        worker = UninstallWorker(package, self._winget, self)
+        worker.finished_with_code.connect(self._on_uninstall_done)
+        worker.failed.connect(self._on_uninstall_failed)
+        worker.finished.connect(lambda w=worker: self._uninstall_workers.remove(w))
+        self._uninstall_workers.append(worker)
+        worker.start()
+
+    def _on_uninstall_done(self, code: int, package: WingetPackage) -> None:
+        success = code == 0
+        self._installed_view.mark_action_result(package, success, "Désinstallation")
+        self._status_label.setText(
+            f"{package.name} désinstallé." if success
+            else f"Échec de la désinstallation de {package.name} (code {code})."
+        )
+        if success:
+            self._refresh_installed_list()
+
+    def _on_uninstall_failed(self, message: str, package: WingetPackage) -> None:
+        self._installed_view.mark_action_result(package, False, "Désinstallation")
+        self._status_label.setText(f"Erreur : {message}")
+
+    def _on_upgrade_all_requested(self) -> None:
+        ids = list(self._installed_view.upgradable_ids)
+        if not ids:
+            return
+        confirm = QMessageBox.question(
+            self, "Confirmer la mise à jour",
+            f"Mettre à jour {len(ids)} paquet(s) ?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self._run_bulk_install(ids, action="upgrade")

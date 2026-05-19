@@ -59,3 +59,34 @@ class Winget:
         if version:
             args.extend(["--version", version])
         return subprocess.run(args).returncode
+
+    # ------------------------------------------------------------- uninstall
+    def uninstall(self, package_id: str) -> int:
+        args = [
+            "winget", "uninstall", "--id", package_id, "--exact",
+            "--accept-source-agreements", "--disable-interactivity",
+        ]
+        return subprocess.run(args).returncode
+
+    # --------------------------------------------------------------- upgrade
+    def upgrade(self, package_id: str) -> int:
+        args = [
+            "winget", "upgrade", "--id", package_id, "--exact",
+            "--accept-package-agreements", "--accept-source-agreements",
+            "--disable-interactivity",
+        ]
+        return subprocess.run(args).returncode
+
+    def list_upgradable_ids(self) -> set[str]:
+        try:
+            result = subprocess.run(
+                ["winget", "upgrade", "--disable-interactivity"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return set()
+        return {p.id for p in parse_search_output(result.stdout)}

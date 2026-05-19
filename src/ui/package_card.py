@@ -99,7 +99,9 @@ class PackageCard(QFrame):
 
         self._installed_badge.setVisible(installed)
         self._install_btn.setVisible(not installed)
-        self._add_btn.setVisible(not installed)
+        # Le bouton "+ Ajouter" reste disponible même si le paquet est installé
+        # (l'utilisateur peut vouloir l'inclure dans un export de configuration).
+        self._add_btn.setVisible(True)
 
     def set_bundle_state(self, in_bundle: bool) -> None:
         # éviter une boucle si on synchronise depuis l'extérieur
