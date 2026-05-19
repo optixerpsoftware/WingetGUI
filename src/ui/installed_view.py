@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from src.ui.spinner import SpinnerWithLabel
 from src.winget import WingetPackage
 
 
@@ -169,6 +170,10 @@ class InstalledView(QWidget):
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._results_layout.insertWidget(0, self._placeholder)
 
+        self._loading = SpinnerWithLabel("Analyse des paquets installés…")
+        self._loading.hide()
+        self._results_layout.insertWidget(1, self._loading)
+
         scroll = QScrollArea()
         scroll.setWidget(self._results_host)
         scroll.setWidgetResizable(True)
@@ -192,8 +197,10 @@ class InstalledView(QWidget):
         self._refresh_btn.setText("Chargement…" if loading else "🔄  Actualiser")
         if loading:
             self._clear_cards()
-            self._placeholder.setText("Analyse des paquets installés…")
-            self._placeholder.show()
+            self._placeholder.hide()
+            self._loading.start()
+        else:
+            self._loading.stop()
 
     def show_packages(self, packages: list[WingetPackage], upgradable: set[str]) -> None:
         self._packages = packages

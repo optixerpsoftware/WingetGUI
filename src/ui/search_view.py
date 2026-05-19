@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui.package_card import PackageCard
+from src.ui.selection_panel import SelectionPanel
+from src.ui.spinner import SpinnerWithLabel
 from src.winget import WingetPackage
 
 
@@ -16,6 +18,7 @@ class SearchView(QWidget):
     import_requested  = Signal()
     export_requested  = Signal()
     bulk_install_requested = Signal()
+    bundle_cleared    = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -84,10 +87,24 @@ class SearchView(QWidget):
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._results_layout.insertWidget(0, self._placeholder)
 
+        self._loading = SpinnerWithLabel("Recherche en cours…")
+        self._loading.hide()
+        self._results_layout.insertWidget(1, self._loading)
+
         scroll = QScrollArea()
         scroll.setWidget(self._results_host)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Panneau latéral de sélection
+        self._selection_panel = SelectionPanel()
+        self._selection_panel.remove_requested.connect(self._on_remove_from_selection)
+        self._selection_panel.clear_requested.connect(self.bundle_cleared.emit)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(14)
+        content_row.addWidget(scroll, stretch=1)
+        content_row.addWidget(self._selection_panel)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 16)
@@ -98,7 +115,7 @@ class SearchView(QWidget):
         root.addLayout(toolbar)
         root.addLayout(search_row)
         root.addSpacing(4)
-        root.addWidget(scroll, stretch=1)
+        root.addLayout(content_row, stretch=1)
 
     # ---- API publique ----------------------------------------------------
 
@@ -106,6 +123,12 @@ class SearchView(QWidget):
         self._button.setEnabled(not busy)
         self._button.setText("Recherche…" if busy else "Rechercher")
         self._input.setEnabled(not busy)
+        if busy:
+            self._clear_results()
+            self._placeholder.hide()
+            self._loading.start()
+        else:
+            self._loading.stop()
 
     @property
     def installed_ids(self) -> set[str]:
@@ -152,6 +175,18 @@ class SearchView(QWidget):
 
     def refresh_bundle_count(self, count: int) -> None:
         self._refresh_bundle_button(count)
+
+    def set_bundle(self, packages: list[WingetPackage]) -> None:
+        """Met à jour le panneau latéral et synchronise l'état des cartes."""
+        self._selection_panel.set_packages(packages)
+        bundle_ids = {p.id for p in packages}
+        for pid, card in self._cards.items():
+            card.set_bundle_state(pid in bundle_ids)
+        self._refresh_bundle_button(len(packages))
+
+    def _on_remove_from_selection(self, package: WingetPackage) -> None:
+        # le retrait depuis le panneau émet le même signal qu'un décochage de carte
+        self.bundle_toggled.emit(package, False)
 
     # ---- interne ---------------------------------------------------------
 

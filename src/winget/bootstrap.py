@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -7,6 +8,13 @@ from config import settings
 
 _PACKAGE_URL = "https://aka.ms/getwinget"
 _MODULE_NAME = "WinGet.msixbundle"
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+if sys.platform == "win32":
+    _STARTUPINFO = subprocess.STARTUPINFO()
+    _STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _STARTUPINFO.wShowWindow = subprocess.SW_HIDE
+else:
+    _STARTUPINFO = None
 
 
 def is_winget_installed() -> bool:
@@ -16,6 +24,8 @@ def is_winget_installed() -> bool:
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            creationflags=_NO_WINDOW,
+            startupinfo=_STARTUPINFO,
         )
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -46,8 +56,13 @@ def _download(download_dir: Path) -> Path:
 def _install_msix(package_path: Path) -> None:
     try:
         subprocess.run(
-            ["powershell", "-Command", f"Add-AppxPackage -Path '{package_path}'"],
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+             "-Command", f"Add-AppxPackage -Path '{package_path}'"],
             check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_NO_WINDOW,
+            startupinfo=_STARTUPINFO,
         )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"Échec de l'installation : {error}") from error

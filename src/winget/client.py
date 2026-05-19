@@ -1,10 +1,29 @@
 import subprocess
+import sys
 from typing import Optional
 
 from src.winget.bootstrap import ensure_winget
 from src.winget.compatibility import check_compatibility
 from src.winget.models import WingetPackage
 from src.winget.parser import parse_search_output
+
+# Empêche toute fenêtre console (cmd / conhost) d'apparaître pour les enfants.
+# CREATE_NO_WINDOW seul peut être contourné par certains hôtes ; on combine
+# donc avec STARTUPINFO + SW_HIDE pour blinder le cas Windows.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+if sys.platform == "win32":
+    _STARTUPINFO = subprocess.STARTUPINFO()
+    _STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _STARTUPINFO.wShowWindow = subprocess.SW_HIDE
+else:
+    _STARTUPINFO = None
+
+
+def _run(args, **kwargs):
+    """subprocess.run avec masquage systématique de la console enfant."""
+    kwargs.setdefault("creationflags", _NO_WINDOW)
+    kwargs.setdefault("startupinfo", _STARTUPINFO)
+    return subprocess.run(args, **kwargs)
 
 
 class Winget:
@@ -19,7 +38,7 @@ class Winget:
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list[WingetPackage]:
         try:
-            result = subprocess.run(
+            result = _run(
                 ["winget", "search", "--query", query, "--disable-interactivity"],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -34,7 +53,7 @@ class Winget:
     # ------------------------------------------------------------- installed
     def list_installed(self) -> list[WingetPackage]:
         try:
-            result = subprocess.run(
+            result = _run(
                 ["winget", "list", "--disable-interactivity"],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -58,7 +77,11 @@ class Winget:
         ]
         if version:
             args.extend(["--version", version])
-        return subprocess.run(args).returncode
+        return _run(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
 
     # ------------------------------------------------------------- uninstall
     def uninstall(self, package_id: str) -> int:
@@ -66,7 +89,11 @@ class Winget:
             "winget", "uninstall", "--id", package_id, "--exact",
             "--accept-source-agreements", "--disable-interactivity",
         ]
-        return subprocess.run(args).returncode
+        return _run(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
 
     # --------------------------------------------------------------- upgrade
     def upgrade(self, package_id: str) -> int:
@@ -75,11 +102,15 @@ class Winget:
             "--accept-package-agreements", "--accept-source-agreements",
             "--disable-interactivity",
         ]
-        return subprocess.run(args).returncode
+        return _run(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
 
     def list_upgradable_ids(self) -> set[str]:
         try:
-            result = subprocess.run(
+            result = _run(
                 ["winget", "upgrade", "--disable-interactivity"],
                 check=False,
                 stdout=subprocess.PIPE,

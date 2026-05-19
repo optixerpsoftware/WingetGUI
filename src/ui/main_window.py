@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from src.ui.import_dialog import ImportSelectionDialog
 from src.ui.installed_view import InstalledView
 from src.ui.search_view import SearchView
+from src.ui.spinner import Spinner
 from src.ui.theme import QSS
 from src.ui.workers import (
     BulkInstallWorker, InstallWorker, InstalledListWorker, InstalledScanWorker,
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
 
         self._winget = Winget()
         self._bundle: dict[str, WingetPackage] = {}
+        self._installed_packages: dict[str, WingetPackage] = {}
 
         self._search_worker: SearchWorker | None = None
         self._scan_worker: InstalledScanWorker | None = None
@@ -49,6 +51,7 @@ class MainWindow(QMainWindow):
         self._view.import_requested.connect(self._on_import_requested)
         self._view.export_requested.connect(self._on_export_requested)
         self._view.bulk_install_requested.connect(self._on_bulk_install_requested)
+        self._view.bundle_cleared.connect(self._on_bundle_cleared)
 
         self._installed_view = InstalledView()
         self._installed_view.refresh_requested.connect(self._refresh_installed_list)
@@ -75,8 +78,12 @@ class MainWindow(QMainWindow):
         self._progress.setMaximumWidth(220)
         self._progress.setVisible(False)
 
+        self._status_spinner = Spinner(size=18, line_width=2)
+        self._status_spinner.hide()
+
         bar = QStatusBar()
         bar.setSizeGripEnabled(False)
+        bar.addWidget(self._status_spinner)
         bar.addWidget(self._status_label, stretch=1)
         bar.addPermanentWidget(self._progress)
         self.setStatusBar(bar)
@@ -85,16 +92,21 @@ class MainWindow(QMainWindow):
 
     def _scan_installed(self) -> None:
         self._status_label.setText("Analyse des paquets installés…")
+        self._status_spinner.start()
         self._scan_worker = InstalledScanWorker(self._winget, self)
-        self._scan_worker.finished_with_ids.connect(self._on_installed_scanned)
-        self._scan_worker.failed.connect(
-            lambda msg: self._status_label.setText(f"Scan échoué : {msg}")
-        )
+        self._scan_worker.finished_with_packages.connect(self._on_installed_scanned)
+        self._scan_worker.failed.connect(self._on_scan_failed)
         self._scan_worker.start()
 
-    def _on_installed_scanned(self, installed_ids: set[str]) -> None:
-        self._view.set_installed_ids(installed_ids)
-        self._status_label.setText(f"{len(installed_ids)} paquets installés détectés.")
+    def _on_installed_scanned(self, packages: list[WingetPackage]) -> None:
+        self._status_spinner.stop()
+        self._installed_packages = {p.id: p for p in packages}
+        self._view.set_installed_ids(set(self._installed_packages.keys()))
+        self._status_label.setText(f"{len(packages)} paquets installés détectés.")
+
+    def _on_scan_failed(self, msg: str) -> None:
+        self._status_spinner.stop()
+        self._status_label.setText(f"Scan échoué : {msg}")
 
     # ---- recherche ------------------------------------------------------
 
@@ -103,6 +115,7 @@ class MainWindow(QMainWindow):
             return
 
         self._view.set_busy(True)
+        self._status_spinner.start()
         self._status_label.setText(f"Recherche de « {query} »…")
 
         self._search_worker = SearchWorker(query, self._winget, self)
@@ -111,11 +124,13 @@ class MainWindow(QMainWindow):
         self._search_worker.start()
 
     def _on_results_ready(self, packages: list[WingetPackage]) -> None:
+        self._status_spinner.stop()
         self._view.set_busy(False)
         self._view.show_results(packages, set(self._bundle.keys()))
         self._status_label.setText(f"{len(packages)} résultat(s).")
 
     def _on_search_failed(self, message: str) -> None:
+        self._status_spinner.stop()
         self._view.set_busy(False)
         self._view.show_error(message)
         self._status_label.setText("Erreur pendant la recherche.")
@@ -127,8 +142,13 @@ class MainWindow(QMainWindow):
             self._bundle[package.id] = package
         else:
             self._bundle.pop(package.id, None)
-        self._view.refresh_bundle_count(len(self._bundle))
+        self._view.set_bundle(list(self._bundle.values()))
         self._status_label.setText(f"Sélection : {len(self._bundle)} paquet(s).")
+
+    def _on_bundle_cleared(self) -> None:
+        self._bundle.clear()
+        self._view.set_bundle([])
+        self._status_label.setText("Sélection vidée.")
 
     # ---- installation unitaire ------------------------------------------
 
@@ -147,7 +167,7 @@ class MainWindow(QMainWindow):
         if success:
             # désélectionne du bundle puisqu'il est désormais installé
             self._bundle.pop(package.id, None)
-            self._view.refresh_bundle_count(len(self._bundle))
+            self._view.set_bundle(list(self._bundle.values()))
         self._status_label.setText(
             f"{package.name} installé." if success
             else f"Échec de l'installation de {package.name} (code {code})."
@@ -192,7 +212,11 @@ class MainWindow(QMainWindow):
                                     "Aucun paquet trouvé dans le fichier.")
             return
 
-        dialog = ImportSelectionDialog(ids, set(self._view.installed_ids), self)
+        name_by_id = {pid: pkg.name for pid, pkg in self._installed_packages.items()}
+        dialog = ImportSelectionDialog(
+            ids, name_by_id, set(self._view.installed_ids),
+            winget=self._winget, parent=self,
+        )
         if dialog.exec() != ImportSelectionDialog.Accepted:
             return
 
@@ -218,6 +242,7 @@ class MainWindow(QMainWindow):
         self._progress.setRange(0, len(ids))
         self._progress.setValue(0)
         self._progress.setVisible(True)
+        self._status_spinner.start()
 
         self._bulk_worker = BulkInstallWorker(ids, self._winget, self, action=action)
         self._bulk_worker.progress.connect(self._on_bulk_progress)
@@ -246,7 +271,8 @@ class MainWindow(QMainWindow):
 
     def _on_bulk_finished(self, n_success: int, n_total: int) -> None:
         self._progress.setVisible(False)
-        self._view.refresh_bundle_count(len(self._bundle))
+        self._status_spinner.stop()
+        self._view.set_bundle(list(self._bundle.values()))
         QMessageBox.information(
             self, "Opération terminée",
             f"{n_success}/{n_total} paquet(s) traité(s) avec succès.",
@@ -258,6 +284,7 @@ class MainWindow(QMainWindow):
 
     def _on_bulk_failed(self, message: str) -> None:
         self._progress.setVisible(False)
+        self._status_spinner.stop()
         QMessageBox.critical(self, "Installation interrompue", message)
         self._status_label.setText(f"Erreur : {message}")
 
@@ -275,6 +302,7 @@ class MainWindow(QMainWindow):
         if self._installed_list_worker and self._installed_list_worker.isRunning():
             return
         self._installed_view.set_loading(True)
+        self._status_spinner.start()
         self._status_label.setText("Chargement des paquets installés…")
         self._installed_list_worker = InstalledListWorker(self._winget, self)
         self._installed_list_worker.finished_with_packages.connect(self._on_installed_list_ready)
@@ -283,8 +311,10 @@ class MainWindow(QMainWindow):
 
     def _on_installed_list_ready(self, packages: list[WingetPackage],
                                  upgradable: set[str]) -> None:
+        self._status_spinner.stop()
         self._installed_view.set_loading(False)
         self._installed_view.show_packages(packages, upgradable)
+        self._installed_packages = {p.id: p for p in packages}
         # garde aussi en cohérence l'état "installé" sur la vue de recherche
         self._view.set_installed_ids({p.id for p in packages})
         self._status_label.setText(
@@ -292,6 +322,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_installed_list_failed(self, message: str) -> None:
+        self._status_spinner.stop()
         self._installed_view.set_loading(False)
         self._installed_view.show_error(message)
         self._status_label.setText(f"Erreur : {message}")

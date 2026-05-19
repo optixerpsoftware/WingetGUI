@@ -214,6 +214,68 @@ QPushButton#danger:disabled {{
     border-color: {BORDER};
 }}
 
+/* === Import dialog rows === */
+QLabel#importName {{
+    font-size: 13px;
+    font-weight: 600;
+}}
+QLabel#importName[pending="true"] {{
+    color: {TEXT_MUTED};
+    font-style: italic;
+    font-weight: 500;
+}}
+QLabel#importId {{
+    color: {TEXT_MUTED};
+    font-size: 11px;
+}}
+
+/* === Selection panel === */
+QWidget#selectionPanel {{
+    background-color: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 12px;
+}}
+QLabel#selectionTitle {{
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+}}
+QLabel#selectionPlaceholder {{
+    color: {TEXT_MUTED};
+    font-size: 12px;
+    padding: 20px 8px;
+}}
+QFrame#selectionRow {{
+    background-color: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QFrame#selectionRow:hover {{
+    border-color: {ACCENT};
+}}
+QLabel#selectionName {{
+    font-size: 12px;
+    font-weight: 600;
+}}
+QLabel#selectionId {{
+    color: {TEXT_MUTED};
+    font-size: 11px;
+}}
+QPushButton#selectionRemove {{
+    background-color: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 13px;
+    color: {TEXT_MUTED};
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0;
+}}
+QPushButton#selectionRemove:hover {{
+    background-color: rgba(255, 107, 107, 0.15);
+    border-color: {DANGER};
+    color: {DANGER};
+}}
+
 /* === Tabs === */
 QTabWidget#mainTabs::pane {{
     border: none;

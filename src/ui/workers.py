@@ -23,9 +23,9 @@ class SearchWorker(QThread):
 
 
 class InstalledScanWorker(QThread):
-    """Scanne les paquets déjà installés sur le système."""
+    """Scanne les paquets déjà installés sur le système (sans détection MAJ)."""
 
-    finished_with_ids = Signal(set)        # set[str]
+    finished_with_packages = Signal(list)   # list[WingetPackage]
     failed = Signal(str)
 
     def __init__(self, winget: Winget, parent: QObject | None = None):
@@ -34,7 +34,7 @@ class InstalledScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.finished_with_ids.emit(self._winget.installed_ids())
+            self.finished_with_packages.emit(self._winget.list_installed())
         except Exception as exc:
             self.failed.emit(str(exc))
 
