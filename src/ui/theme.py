@@ -11,6 +11,7 @@ TEXT        = "#e9ecef"
 TEXT_MUTED  = "#909296"
 SUCCESS     = "#51cf66"
 DANGER      = "#ff6b6b"
+ACCENT      = "#845ef7"
 
 QSS = f"""
 * {{
@@ -73,12 +74,33 @@ QPushButton#ghost {{
     background-color: transparent;
     border: 1px solid {BORDER};
     border-radius: 8px;
-    padding: 6px 14px;
+    padding: 8px 14px;
     color: {TEXT};
     font-size: 12px;
+    font-weight: 500;
 }}
 QPushButton#ghost:hover  {{ background-color: {SURFACE_ALT}; border-color: {PRIMARY}; }}
 QPushButton#ghost:pressed{{ background-color: {SURFACE}; }}
+QPushButton#ghost:disabled {{
+    color: {TEXT_MUTED};
+    border-color: {BORDER};
+}}
+
+QPushButton#add {{
+    background-color: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 8px 14px;
+    color: {TEXT};
+    font-size: 12px;
+}}
+QPushButton#add:hover  {{ background-color: {SURFACE_ALT}; border-color: {ACCENT}; color: {ACCENT}; }}
+QPushButton#add:checked {{
+    background-color: rgba(132, 94, 247, 0.18);
+    border-color: {ACCENT};
+    color: {ACCENT};
+    font-weight: 600;
+}}
 
 /* === Package cards === */
 QFrame#card {{
@@ -89,6 +111,9 @@ QFrame#card {{
 QFrame#card:hover {{
     background-color: {SURFACE_ALT};
     border-color: #3a3d44;
+}}
+QFrame#card[installed="true"] {{
+    border-color: rgba(81, 207, 102, 0.35);
 }}
 QLabel#cardName {{
     font-size: 15px;
@@ -114,6 +139,15 @@ QLabel#cardSource {{
     border-radius: 6px;
     padding: 3px 8px;
 }}
+QLabel#installedBadge {{
+    color: {SUCCESS};
+    font-size: 12px;
+    font-weight: 600;
+    background-color: rgba(81, 207, 102, 0.12);
+    border: 1px solid rgba(81, 207, 102, 0.35);
+    border-radius: 8px;
+    padding: 6px 12px;
+}}
 
 /* === Scroll area === */
 QScrollArea, QScrollArea > QWidget > QWidget {{
@@ -133,4 +167,26 @@ QScrollBar::handle:vertical {{
 QScrollBar::handle:vertical:hover {{ background: #4a4d55; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+
+/* === Progress bar === */
+QProgressBar {{
+    background-color: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    text-align: center;
+    color: {TEXT};
+    height: 16px;
+}}
+QProgressBar::chunk {{
+    background-color: {PRIMARY};
+    border-radius: 5px;
+}}
+
+/* === Message boxes === */
+QMessageBox {{
+    background-color: {SURFACE};
+}}
+QMessageBox QLabel {{
+    color: {TEXT};
+}}
 """

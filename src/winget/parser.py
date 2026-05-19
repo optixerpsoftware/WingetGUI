@@ -1,11 +1,16 @@
 from src.winget.models import WingetPackage
 
+# Colonnes connues qui peuvent apparaître entre Version et Source.
+_KNOWN_MIDDLE_COLUMNS = ("Match", "Available")
+
 
 def parse_search_output(output: str) -> list[WingetPackage]:
-    """Parse la sortie tabulaire de `winget search`.
+    """Parse la sortie tabulaire de `winget search` ou `winget list`.
 
     Winget utilise des colonnes à largeur fixe. On déduit les positions
     depuis la ligne d'en-tête, puis on découpe chaque ligne par index.
+    Les colonnes intermédiaires (Match, Available) sont ignorées : seul
+    `Version` est conservé.
     """
     lines = output.splitlines()
 
@@ -20,11 +25,14 @@ def parse_search_output(output: str) -> list[WingetPackage]:
     col_name    = header.index("Name")
     col_id      = header.index("Id")
     col_version = header.index("Version")
-    col_match   = header.index("Match") if "Match" in header else None
     col_source  = header.index("Source") if "Source" in header else None
 
-    # Borne supérieure de Version : Match si présente, sinon Source
-    col_version_end = col_match or col_source
+    # Borne supérieure de la colonne Version : la 1re colonne intermédiaire
+    # connue (Match ou Available) si présente, sinon Source.
+    middle_positions = [
+        header.index(kw) for kw in _KNOWN_MIDDLE_COLUMNS if kw in header
+    ]
+    col_version_end = min(middle_positions) if middle_positions else col_source
 
     data_lines = [
         line for line in lines[header_index + 1:]
