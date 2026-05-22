@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -14,6 +14,8 @@ class SearchView(QWidget):
 
     search_requested  = Signal(str)
     install_requested = Signal(WingetPackage)
+    update_requested  = Signal(WingetPackage)
+    detail_requested  = Signal(WingetPackage)
     bundle_toggled    = Signal(WingetPackage, bool)
     import_requested  = Signal()
     export_requested  = Signal()
@@ -24,6 +26,7 @@ class SearchView(QWidget):
         super().__init__(parent)
         self._cards: dict[str, PackageCard] = {}
         self._installed_ids: set[str] = set()
+        self._upgradable_ids: set[str] = set()
         self._build_ui()
         self._refresh_bundle_button(0)
 
@@ -60,15 +63,21 @@ class SearchView(QWidget):
         toolbar.addWidget(self._bulk_btn)
 
         # Barre de recherche
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(400)
+        self._debounce.timeout.connect(self._emit_search)
+
         self._input = QLineEdit()
         self._input.setObjectName("search")
         self._input.setPlaceholderText("Rechercher un paquet (ex. vscode, firefox)…")
-        self._input.returnPressed.connect(self._emit_search)
+        self._input.textChanged.connect(self._on_text_changed)
+        self._input.returnPressed.connect(self._emit_search_now)
 
         self._button = QPushButton("Rechercher")
         self._button.setObjectName("primary")
         self._button.setCursor(Qt.PointingHandCursor)
-        self._button.clicked.connect(self._emit_search)
+        self._button.clicked.connect(self._emit_search_now)
 
         search_row = QHBoxLayout()
         search_row.setSpacing(10)
@@ -137,7 +146,14 @@ class SearchView(QWidget):
     def set_installed_ids(self, installed: set[str]) -> None:
         self._installed_ids = installed
         for pkg_id, card in self._cards.items():
-            card.set_already_installed(pkg_id in installed)
+            card.set_already_installed(pkg_id in installed,
+                                       pkg_id in self._upgradable_ids)
+
+    def set_upgradable_ids(self, upgradable: set[str]) -> None:
+        self._upgradable_ids = upgradable
+        for pkg_id, card in self._cards.items():
+            card.set_already_installed(pkg_id in self._installed_ids,
+                                       pkg_id in upgradable)
 
     def show_results(self, packages: list[WingetPackage], bundle_ids: set[str]) -> None:
         self._clear_results()
@@ -150,8 +166,11 @@ class SearchView(QWidget):
         for pkg in packages:
             card = PackageCard(pkg)
             card.install_requested.connect(self.install_requested.emit)
+            card.update_requested.connect(self.update_requested.emit)
+            card.detail_requested.connect(self.detail_requested.emit)
             card.bundle_toggled.connect(self.bundle_toggled.emit)
-            card.set_already_installed(pkg.id in self._installed_ids)
+            card.set_already_installed(pkg.id in self._installed_ids,
+                                       pkg.id in self._upgradable_ids)
             card.set_bundle_state(pkg.id in bundle_ids)
             self._cards[pkg.id] = card
             self._results_layout.insertWidget(self._results_layout.count() - 1, card)
@@ -167,6 +186,13 @@ class SearchView(QWidget):
         card = self._cards.get(package.id)
         if card:
             card.mark_install_result(success)
+
+    def mark_updated(self, package: WingetPackage, success: bool) -> None:
+        if success:
+            self._upgradable_ids.discard(package.id)
+        card = self._cards.get(package.id)
+        if card:
+            card.mark_update_result(success)
 
     def update_bundle_state(self, package: WingetPackage, in_bundle: bool) -> None:
         card = self._cards.get(package.id)
@@ -199,6 +225,13 @@ class SearchView(QWidget):
             self._bulk_btn.setText(f"Installer la sélection ({count})")
             self._bulk_btn.setEnabled(True)
             self._export_btn.setEnabled(True)
+
+    def _on_text_changed(self, _text: str) -> None:
+        self._debounce.start()
+
+    def _emit_search_now(self) -> None:
+        self._debounce.stop()
+        self._emit_search()
 
     def _emit_search(self) -> None:
         query = self._input.text().strip()

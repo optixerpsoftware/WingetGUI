@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from src.ui.history import ActionHistory
 from src.ui.import_dialog import ImportSelectionDialog
 from src.ui.installed_view import InstalledView
 from src.ui.search_view import SearchView
@@ -13,7 +14,7 @@ from src.ui.spinner import Spinner
 from src.ui.theme import QSS
 from src.ui.workers import (
     BulkInstallWorker, InstallWorker, InstalledListWorker, InstalledScanWorker,
-    SearchWorker, UninstallWorker, UpgradeWorker,
+    SearchWorker, ShowWorker, UninstallWorker, UpgradeWorker,
 )
 from src.winget import Winget, WingetPackage, export_packages, import_package_ids
 
@@ -26,8 +27,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(760, 500)
 
         self._winget = Winget()
+        self._history = ActionHistory()
         self._bundle: dict[str, WingetPackage] = {}
         self._installed_packages: dict[str, WingetPackage] = {}
+        self._upgradable_ids: set[str] = set()
 
         self._search_worker: SearchWorker | None = None
         self._scan_worker: InstalledScanWorker | None = None
@@ -36,6 +39,7 @@ class MainWindow(QMainWindow):
         self._installed_list_worker: InstalledListWorker | None = None
         self._uninstall_workers: list[UninstallWorker] = []
         self._upgrade_workers: list[UpgradeWorker] = []
+        self._show_workers: list[ShowWorker] = []
 
         self._build_ui()
         self.setStyleSheet(QSS)
@@ -47,6 +51,8 @@ class MainWindow(QMainWindow):
         self._view = SearchView()
         self._view.search_requested.connect(self._on_search_requested)
         self._view.install_requested.connect(self._on_install_requested)
+        self._view.update_requested.connect(self._on_search_update_requested)
+        self._view.detail_requested.connect(self._on_detail_requested)
         self._view.bundle_toggled.connect(self._on_bundle_toggled)
         self._view.import_requested.connect(self._on_import_requested)
         self._view.export_requested.connect(self._on_export_requested)
@@ -98,11 +104,23 @@ class MainWindow(QMainWindow):
         self._scan_worker.failed.connect(self._on_scan_failed)
         self._scan_worker.start()
 
-    def _on_installed_scanned(self, packages: list[WingetPackage]) -> None:
+    def _on_installed_scanned(self, packages: list[WingetPackage],
+                              upgradable: set[str]) -> None:
         self._status_spinner.stop()
         self._installed_packages = {p.id: p for p in packages}
+        self._upgradable_ids = upgradable
+        self._view.set_upgradable_ids(upgradable)
         self._view.set_installed_ids(set(self._installed_packages.keys()))
-        self._status_label.setText(f"{len(packages)} paquets installés détectés.")
+        self._update_installed_tab_badge(len(upgradable))
+        n_up = len(upgradable)
+        msg = f"{len(packages)} paquets installés détectés"
+        if n_up:
+            msg += f" · {n_up} mise(s) à jour disponible(s)"
+        self._status_label.setText(msg + ".")
+
+    def _update_installed_tab_badge(self, n_upgradable: int) -> None:
+        label = f"Installés ({n_upgradable})" if n_upgradable else "Installés"
+        self._tabs.setTabText(1, label)
 
     def _on_scan_failed(self, msg: str) -> None:
         self._status_spinner.stop()
@@ -161,20 +179,47 @@ class MainWindow(QMainWindow):
         self._install_workers.append(worker)
         worker.start()
 
-    def _on_install_done(self, code: int, package: WingetPackage) -> None:
+    def _on_install_done(self, code: int, package: WingetPackage, error: str) -> None:
         success = code == 0
         self._view.mark_installed(package, success)
+        self._history.log("install", package, success, error)
         if success:
-            # désélectionne du bundle puisqu'il est désormais installé
             self._bundle.pop(package.id, None)
             self._view.set_bundle(list(self._bundle.values()))
         self._status_label.setText(
             f"{package.name} installé." if success
-            else f"Échec de l'installation de {package.name} (code {code})."
+            else f"Échec installation {package.name} : {self._short_error(error, code)}"
         )
 
     def _on_install_failed(self, message: str, package: WingetPackage) -> None:
         self._view.mark_installed(package, False)
+        self._status_label.setText(f"Erreur : {message}")
+
+    # ---- mise à jour depuis la recherche --------------------------------
+
+    def _on_search_update_requested(self, package: WingetPackage) -> None:
+        self._status_label.setText(f"Mise à jour de {package.name}…")
+        worker = UpgradeWorker(package, self._winget, self)
+        worker.finished_with_code.connect(self._on_search_update_done)
+        worker.failed.connect(self._on_search_update_failed)
+        worker.finished.connect(lambda w=worker: self._upgrade_workers.remove(w))
+        self._upgrade_workers.append(worker)
+        worker.start()
+
+    def _on_search_update_done(self, code: int, package: WingetPackage, error: str) -> None:
+        success = code == 0
+        self._view.mark_updated(package, success)
+        self._history.log("upgrade", package, success, error)
+        if success:
+            self._upgradable_ids.discard(package.id)
+            self._update_installed_tab_badge(len(self._upgradable_ids))
+        self._status_label.setText(
+            f"{package.name} mis à jour." if success
+            else f"Échec MAJ {package.name} : {self._short_error(error, code)}"
+        )
+
+    def _on_search_update_failed(self, message: str, package: WingetPackage) -> None:
+        self._view.mark_updated(package, False)
         self._status_label.setText(f"Erreur : {message}")
 
     # ---- import / export ------------------------------------------------
@@ -255,15 +300,15 @@ class MainWindow(QMainWindow):
         self._progress.setValue(index - 1)
         self._status_label.setText(f"[{index}/{total}] Installation de {package_id}…")
 
-    def _on_bulk_item_done(self, package_id: str, code: int) -> None:
+    def _on_bulk_item_done(self, package_id: str, code: int, error: str) -> None:
         self._progress.setValue(self._progress.value() + 1)
         pkg = self._bundle.get(package_id)
         if pkg:
             self._view.mark_installed(pkg, code == 0)
+            self._history.log("install", pkg, code == 0, error)
             if code == 0:
                 self._bundle.pop(package_id, None)
         else:
-            # paquet importé qui n'est pas dans la vue actuelle
             if code == 0:
                 self._view.set_installed_ids(
                     self._view.installed_ids | {package_id}
@@ -315,8 +360,10 @@ class MainWindow(QMainWindow):
         self._installed_view.set_loading(False)
         self._installed_view.show_packages(packages, upgradable)
         self._installed_packages = {p.id: p for p in packages}
-        # garde aussi en cohérence l'état "installé" sur la vue de recherche
+        self._upgradable_ids = upgradable
+        self._view.set_upgradable_ids(upgradable)
         self._view.set_installed_ids({p.id for p in packages})
+        self._update_installed_tab_badge(len(upgradable))
         self._status_label.setText(
             f"{len(packages)} paquets installés · {len(upgradable)} mise(s) à jour disponible(s)."
         )
@@ -336,12 +383,13 @@ class MainWindow(QMainWindow):
         self._upgrade_workers.append(worker)
         worker.start()
 
-    def _on_update_done(self, code: int, package: WingetPackage) -> None:
+    def _on_update_done(self, code: int, package: WingetPackage, error: str) -> None:
         success = code == 0
         self._installed_view.mark_action_result(package, success, "Mise à jour")
+        self._history.log("upgrade", package, success, error)
         self._status_label.setText(
             f"{package.name} mis à jour." if success
-            else f"Échec de la mise à jour de {package.name} (code {code})."
+            else f"Échec MAJ {package.name} : {self._short_error(error, code)}"
         )
         if success:
             self._refresh_installed_list()
@@ -368,12 +416,13 @@ class MainWindow(QMainWindow):
         self._uninstall_workers.append(worker)
         worker.start()
 
-    def _on_uninstall_done(self, code: int, package: WingetPackage) -> None:
+    def _on_uninstall_done(self, code: int, package: WingetPackage, error: str) -> None:
         success = code == 0
         self._installed_view.mark_action_result(package, success, "Désinstallation")
+        self._history.log("uninstall", package, success, error)
         self._status_label.setText(
             f"{package.name} désinstallé." if success
-            else f"Échec de la désinstallation de {package.name} (code {code})."
+            else f"Échec désinstallation {package.name} : {self._short_error(error, code)}"
         )
         if success:
             self._refresh_installed_list()
@@ -393,3 +442,34 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.Yes:
             return
         self._run_bulk_install(ids, action="upgrade")
+
+    # ---- détails d'un paquet --------------------------------------------
+
+    def _on_detail_requested(self, package: WingetPackage) -> None:
+        self._status_label.setText(f"Chargement des détails de {package.name}…")
+        worker = ShowWorker(package.id, self._winget, self)
+        worker.finished_with_info.connect(self._on_detail_ready)
+        worker.failed.connect(self._on_detail_failed)
+        worker.finished.connect(lambda w=worker: self._show_workers.remove(w))
+        self._show_workers.append(worker)
+        worker.start()
+
+    def _on_detail_ready(self, package_id: str, info: str) -> None:
+        self._status_label.setText("Prêt.")
+        if not info:
+            info = "Aucune information disponible."
+        pkg = self._installed_packages.get(package_id)
+        title = pkg.name if pkg else package_id
+        QMessageBox.information(self, f"Détails — {title}", info)
+
+    def _on_detail_failed(self, package_id: str, message: str) -> None:
+        self._status_label.setText(f"Erreur : {message}")
+
+    # ---- utilitaires -----------------------------------------------------
+
+    @staticmethod
+    def _short_error(error: str, code: int) -> str:
+        if error:
+            first_line = error.split("\n")[0][:120]
+            return first_line
+        return f"code {code}"

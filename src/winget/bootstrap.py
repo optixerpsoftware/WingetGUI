@@ -43,6 +43,34 @@ def ensure_winget(download_dir: Path | None = None) -> bool:
     return True
 
 
+_MSSTORE_URL = "https://storeedgefd.dsx.mp.microsoft.com/v9.0"
+
+
+def ensure_sources() -> None:
+    """Vérifie que les sources winget par défaut sont configurées."""
+    try:
+        result = subprocess.run(
+            ["winget", "source", "list", "--name", "msstore",
+             "--accept-source-agreements", "--disable-interactivity"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=_NO_WINDOW,
+            startupinfo=_STARTUPINFO,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["winget", "source", "add", "--name", "msstore",
+                 "--arg", _MSSTORE_URL,
+                 "--accept-source-agreements", "--disable-interactivity"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW,
+                startupinfo=_STARTUPINFO,
+            )
+    except FileNotFoundError:
+        pass
+
+
 def _download(download_dir: Path) -> Path:
     download_dir.mkdir(parents=True, exist_ok=True)
     output_file = download_dir / _MODULE_NAME

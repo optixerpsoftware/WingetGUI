@@ -3,6 +3,8 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
 )
 
+from src.ui.spinner import Spinner
+
 from src.winget import WingetPackage
 
 
@@ -17,6 +19,8 @@ class PackageCard(QFrame):
     """
 
     install_requested = Signal(WingetPackage)
+    update_requested = Signal(WingetPackage)
+    detail_requested = Signal(WingetPackage)
     bundle_toggled = Signal(WingetPackage, bool)   # package, is_in_bundle
 
     def __init__(self, package: WingetPackage, parent=None):
@@ -31,9 +35,16 @@ class PackageCard(QFrame):
     # ---- construction ----------------------------------------------------
 
     def _build_layout(self) -> None:
-        name = QLabel(self._package.name)
-        name.setObjectName("cardName")
-        name.setWordWrap(True)
+        name_btn = QPushButton(self._package.name)
+        name_btn.setObjectName("cardNameBtn")
+        name_btn.setCursor(Qt.PointingHandCursor)
+        name_btn.setFlat(True)
+        name_btn.setStyleSheet(
+            "QPushButton#cardNameBtn { text-align: left; font-size: 14px; "
+            "font-weight: 600; border: none; padding: 0; color: #2563eb; } "
+            "QPushButton#cardNameBtn:hover { text-decoration: underline; }"
+        )
+        name_btn.clicked.connect(self._emit_detail)
 
         pkg_id = QLabel(self._package.id)
         pkg_id.setObjectName("cardId")
@@ -53,7 +64,7 @@ class PackageCard(QFrame):
 
         info = QVBoxLayout()
         info.setSpacing(4)
-        info.addWidget(name)
+        info.addWidget(name_btn)
         info.addWidget(pkg_id)
         info.addSpacing(4)
         info.addLayout(meta_row)
@@ -74,10 +85,21 @@ class PackageCard(QFrame):
         self._installed_badge.setObjectName("installedBadge")
         self._installed_badge.hide()
 
+        self._update_btn = QPushButton("Mettre à jour")
+        self._update_btn.setObjectName("primary")
+        self._update_btn.setCursor(Qt.PointingHandCursor)
+        self._update_btn.clicked.connect(self._emit_update)
+        self._update_btn.hide()
+
+        self._spinner = Spinner(size=20, line_width=2)
+        self._spinner.hide()
+
         actions = QHBoxLayout()
         actions.setSpacing(8)
         actions.addWidget(self._add_btn)
+        actions.addWidget(self._spinner)
         actions.addWidget(self._install_btn)
+        actions.addWidget(self._update_btn)
         actions.addWidget(self._installed_badge)
 
         root = QHBoxLayout(self)
@@ -92,15 +114,14 @@ class PackageCard(QFrame):
     def package(self) -> WingetPackage:
         return self._package
 
-    def set_already_installed(self, installed: bool) -> None:
+    def set_already_installed(self, installed: bool, upgradable: bool = False) -> None:
         self.setProperty("installed", installed)
         self.style().unpolish(self)
         self.style().polish(self)
 
-        self._installed_badge.setVisible(installed)
+        self._installed_badge.setVisible(installed and not upgradable)
         self._install_btn.setVisible(not installed)
-        # Le bouton "+ Ajouter" reste disponible même si le paquet est installé
-        # (l'utilisateur peut vouloir l'inclure dans un export de configuration).
+        self._update_btn.setVisible(installed and upgradable)
         self._add_btn.setVisible(True)
 
     def set_bundle_state(self, in_bundle: bool) -> None:
@@ -111,16 +132,35 @@ class PackageCard(QFrame):
         self._add_btn.blockSignals(False)
 
     def mark_installing(self) -> None:
-        self._install_btn.setEnabled(False)
-        self._install_btn.setText("Installation…")
+        self._install_btn.hide()
+        self._spinner.show()
+        self._spinner.start()
 
     def mark_install_result(self, success: bool) -> None:
+        self._spinner.stop()
+        self._spinner.hide()
         if success:
             self.set_already_installed(True)
             self.set_bundle_state(False)
         else:
+            self._install_btn.show()
             self._install_btn.setEnabled(True)
             self._install_btn.setText("Réessayer")
+
+    def mark_updating(self) -> None:
+        self._update_btn.hide()
+        self._spinner.show()
+        self._spinner.start()
+
+    def mark_update_result(self, success: bool) -> None:
+        self._spinner.stop()
+        self._spinner.hide()
+        if success:
+            self.set_already_installed(True, upgradable=False)
+        else:
+            self._update_btn.show()
+            self._update_btn.setEnabled(True)
+            self._update_btn.setText("Réessayer")
 
     # ---- callbacks internes ----------------------------------------------
 
@@ -131,3 +171,10 @@ class PackageCard(QFrame):
     def _emit_install(self) -> None:
         self.mark_installing()
         self.install_requested.emit(self._package)
+
+    def _emit_update(self) -> None:
+        self.mark_updating()
+        self.update_requested.emit(self._package)
+
+    def _emit_detail(self) -> None:
+        self.detail_requested.emit(self._package)

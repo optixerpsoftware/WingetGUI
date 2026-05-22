@@ -2,7 +2,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from src.winget.bootstrap import ensure_winget
+from src.winget.bootstrap import ensure_sources, ensure_winget
 from src.winget.compatibility import check_compatibility
 from src.winget.models import WingetPackage
 from src.winget.parser import parse_search_output
@@ -34,12 +34,14 @@ class Winget:
             raise RuntimeError("Système non supporté (Windows 10/11 requis).")
         if auto_bootstrap:
             ensure_winget()
+        ensure_sources()
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list[WingetPackage]:
         try:
             result = _run(
-                ["winget", "search", "--query", query, "--disable-interactivity"],
+                ["winget", "search", "--query", query,
+                 "--accept-source-agreements", "--disable-interactivity"],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -54,7 +56,8 @@ class Winget:
     def list_installed(self) -> list[WingetPackage]:
         try:
             result = _run(
-                ["winget", "list", "--disable-interactivity"],
+                ["winget", "list", "--accept-source-agreements",
+                 "--disable-interactivity"],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -69,7 +72,7 @@ class Winget:
         return {p.id for p in self.list_installed()}
 
     # --------------------------------------------------------------- install
-    def install(self, package_id: str, version: Optional[str] = None) -> int:
+    def install(self, package_id: str, version: Optional[str] = None) -> tuple[int, str]:
         args = [
             "winget", "install", "--id", package_id, "--exact",
             "--accept-package-agreements", "--accept-source-agreements",
@@ -77,41 +80,53 @@ class Winget:
         ]
         if version:
             args.extend(["--version", version])
-        return _run(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
+        proc = _run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                     encoding="utf-8", errors="replace")
+        return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
     # ------------------------------------------------------------- uninstall
-    def uninstall(self, package_id: str) -> int:
+    def uninstall(self, package_id: str) -> tuple[int, str]:
         args = [
             "winget", "uninstall", "--id", package_id, "--exact",
             "--accept-source-agreements", "--disable-interactivity",
         ]
-        return _run(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
+        proc = _run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                     encoding="utf-8", errors="replace")
+        return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
     # --------------------------------------------------------------- upgrade
-    def upgrade(self, package_id: str) -> int:
+    def upgrade(self, package_id: str) -> tuple[int, str]:
         args = [
             "winget", "upgrade", "--id", package_id, "--exact",
             "--accept-package-agreements", "--accept-source-agreements",
             "--disable-interactivity",
         ]
-        return _run(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
+        proc = _run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                     encoding="utf-8", errors="replace")
+        return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
+    # ----------------------------------------------------------------- show
+    def show(self, package_id: str) -> str:
+        try:
+            result = _run(
+                ["winget", "show", "--id", package_id, "--exact",
+                 "--accept-source-agreements", "--disable-interactivity"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return ""
+        return result.stdout.strip()
+
+    # ----------------------------------------------------------- upgradable
     def list_upgradable_ids(self) -> set[str]:
         try:
             result = _run(
-                ["winget", "upgrade", "--disable-interactivity"],
+                ["winget", "upgrade", "--accept-source-agreements",
+                 "--disable-interactivity"],
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
